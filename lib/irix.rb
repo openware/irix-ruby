@@ -1,6 +1,7 @@
-require "irix/version"
+require "peatio/upstream/base"
 
 module Irix
-  class Error < StandardError; end
-  # Your code goes here...
+  require "irix/bitfinex"
+  require "irix/hooks"
+  require "irix/version"
 end
