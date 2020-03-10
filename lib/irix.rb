@@ -1,6 +1,13 @@
-require "irix/version"
+require "peatio"
+require "faraday_middleware"
+require "em-synchrony"
+require "em-websocket"
+require "eventmachine"
+require "faraday_middleware"
+require "faye"
 
 module Irix
-  class Error < StandardError; end
-  # Your code goes here...
+  require "irix/bitfinex"
+  require "irix/hooks"
+  require "irix/version"
 end
