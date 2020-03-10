@@ -12,17 +12,21 @@ module Irix
           builder.ssl[:verify] = config['verify_ssl']
         end
       end
+      @ping_set = false
       @rest = (config['rest']).to_s
       @ws_url = "#{config['websocket']}/public"
     end
 
     def ws_connect
       super
+      return if @ping_set
+
       Fiber.new do
         EM::Synchrony.add_periodic_timer(80) do
           @ws.send('{"event":"ping"}')
         end
       end.resume
+      @ping_set = true
     end
 
     def subscribe_trades(market, ws)
@@ -51,12 +55,11 @@ module Irix
         data = msg[2]
         trade =
           {
-            tid: data[0],
-            market: @market,
-            amount: data[2].to_d.abs,
-            price: data[3],
-            date: data[1] / 1000,
-            taker_type: data[2].to_d.positive? ? 'buy' : 'sell'
+            'tid' => data[0],
+            'amount' => data[2].to_d.abs,
+            'price' => data[3],
+            'date' => data[1] / 1000,
+            'taker_type' => data[2].to_d.positive? ? 'buy' : 'sell'
           }
         notify_public_trade(trade)
       end

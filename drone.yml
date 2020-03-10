@@ -1,0 +1,13 @@
+---
+kind: pipeline
+name: default
+
+steps:
+  - name: Run rspec
+    image: ruby:2.6
+    commands:
+      - bundle exec rspec
+
+trigger:
+  event:
+    - push

@@ -5,11 +5,11 @@ require "irix/version"
 Gem::Specification.new do |spec|
   spec.name          = "irix"
   spec.version       = Irix::VERSION
-  spec.authors       = ["mnaichuk"]
+  spec.authors       = ["Naichuk M."]
   spec.email         = ["mnaichuk@heliostech.fr"]
 
-  spec.summary       = %q{Peatio Upstreams Base gem.}
-  spec.description   = %q{Peatio Upstreams Base gem.}
+  spec.summary       = %q{Irix is implementing several crypto-exchange for Arke and Peatio.}
+  spec.description   = %q{Irix is implementing several crypto-exchange for Arke and Peatio.}
   spec.homepage      = "https://www.openware.com"
 
   # Specify which files should be added to the gem when it is released.
