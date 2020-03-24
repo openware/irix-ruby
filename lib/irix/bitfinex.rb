@@ -14,7 +14,7 @@ module Irix
       end
       @ping_set = false
       @rest = (config['rest']).to_s
-      @ws_url = "#{config['websocket']}/public"
+      @ws_url = "#{config['websocket']}"
     end
 
     def ws_connect

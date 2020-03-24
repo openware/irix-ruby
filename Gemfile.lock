@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    irix (2.4.1)
+    irix (2.4.2)
       em-synchrony (~> 1.0)
       em-websocket
       eventmachine
