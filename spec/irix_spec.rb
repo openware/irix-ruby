@@ -5,5 +5,6 @@ RSpec.describe Irix do
 
   it "does something useful" do
     expect(Peatio::Upstream.registry[:bitfinex]).to eq(Irix::Bitfinex)
+    expect(Peatio::Upstream.registry[:huobi]).to eq(Irix::Huobi)
   end
 end

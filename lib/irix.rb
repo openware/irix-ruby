@@ -8,6 +8,7 @@ require "faye"
 
 module Irix
   require "irix/bitfinex"
+  require "irix/huobi"
   require "irix/hooks"
   require "irix/version"
 end

@@ -5,6 +5,7 @@ module Irix
     class << self
       def register
         Peatio::Upstream.registry[:bitfinex] = Irix::Bitfinex
+        Peatio::Upstream.registry[:huobi] = Irix::Huobi
       end
     end
 
