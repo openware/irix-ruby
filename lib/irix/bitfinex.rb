@@ -2,6 +2,15 @@
 
 module Irix
   class Bitfinex < Peatio::Upstream::Base
+    require 'time'
+
+    MIN_INCREMENT_COUNT_TO_SNAPSHOT = 100
+    MIN_PERIOD_TO_SNAPSHOT = 5
+    MAX_PERIOD_TO_SNAPSHOT = 60
+
+    attr_accessor :snap, :snapshot_time, :increment_count, :sequence_number,
+                  :open_channels
+
     def initialize(config)
       super
       @connection = Faraday.new(url: (config['rest']).to_s) do |builder|
@@ -12,14 +21,21 @@ module Irix
           builder.ssl[:verify] = config['verify_ssl']
         end
       end
+      @open_channels = {}
       @ping_set = false
       @rest = (config['rest']).to_s
-      @ws_url = "#{config['websocket']}"
+      @ws_url = (config['websocket']).to_s
     end
 
     def ws_connect
       super
       return if @ping_set
+
+      @ws.on(:open) do |_e|
+        subscribe_trades(@target, @ws)
+        subscribe_orderbook(@target, @ws)
+        logger.info { 'Websocket connected' }
+      end
 
       Fiber.new do
         EM::Synchrony.add_periodic_timer(80) do
@@ -30,6 +46,8 @@ module Irix
     end
 
     def subscribe_trades(market, ws)
+      return unless @config['trade_proxy']
+
       sub = {
         event: 'subscribe',
         channel: 'trades',
@@ -42,9 +60,33 @@ module Irix
       end
     end
 
+    def subscribe_orderbook(market, ws)
+      return unless @config['orderbook_proxy']
+
+      @sequence_number = 0
+      @increment_count = 0
+      @snap = { 'asks' => [], 'bids' => [] }
+      sub = {
+        event: 'subscribe',
+        channel: 'book',
+        symbol: market.upcase,
+        len: 25
+      }
+      Rails.logger.info 'Open event' + sub.to_s
+      EM.next_tick do
+        ws.send(JSON.generate(sub))
+      end
+    end
+
     def ws_read_public_message(msg)
       if msg.is_a?(Array)
-        detect_trade(msg)
+        if msg[1] == 'hb'
+          @ws.send('{"event":"ping"}')
+        elsif @open_channels[msg[0]] == 'trades'
+          detect_trade(msg)
+        elsif @open_channels[msg[0]] == 'book'
+          detect_order(msg)
+        end
       elsif msg.is_a?(Hash)
         message_event(msg)
       end
@@ -65,10 +107,68 @@ module Irix
       end
     end
 
+    # [
+    #   CHANNEL_ID,
+    #   [
+    #     PRICE,
+    #     COUNT,
+    #     AMOUNT
+    #   ]
+    # ]
+    def detect_order(msg)
+      if msg[1][0].is_a?(Array)
+        msg[1].each do |point|
+          if point[2] > 0
+            @snap['bids'] << [point[0].to_s, point[2].to_s]
+          else
+            @snap['asks'] << [point[0].to_s, point[2].abs.to_s]
+          end
+        end
+        publish_snapshot
+      else
+        if @increment_count < MIN_INCREMENT_COUNT_TO_SNAPSHOT && @snapshot_time <= Time.now - MAX_PERIOD_TO_SNAPSHOT
+          publish_snapshot
+          @increment_count = 0
+        elsif @increment_count >= MIN_INCREMENT_COUNT_TO_SNAPSHOT && @snapshot_time < Time.now - MIN_PERIOD_TO_SNAPSHOT
+          publish_snapshot
+          @increment_count = 0
+        end
+
+        publish_increment(msg[1])
+      end
+    end
+
+    def publish_increment(order)
+      side = order[2].positive? ? 'bid' : 'ask'
+      price = order[0].to_s
+      if order[1].zero?
+        amount = 0
+        @snap["#{side}s"].delete_if { |point| point[0] == price }
+      else
+        amount = order[2].abs.to_s
+        @snap["#{side}s"].delete_if { |point| point[0] == price }
+        @snap["#{side}s"] << [price.to_s, amount.to_s]
+      end
+      @increment_count += 1
+      @sequence_number += 1
+      @peatio_mq.enqueue_event('public', 'ethusd', 'ob-inc',
+                               "#{side}s" => [price, amount],
+                               'sequence' => @sequence_number)
+    end
+
+    def publish_snapshot
+      @snapshot_time = Time.now
+      @peatio_mq.enqueue_event('public', 'ethusd', 'ob-snap',
+                               'asks' => @snap['asks'].sort!,
+                               'bids' => @snap['bids'].sort.reverse!,
+                               'sequence' => @sequence_number)
+    end
+
     def message_event(msg)
       case msg['event']
       when 'subscribed'
         Rails.logger.info "Event: #{msg}"
+        @open_channels[msg['chanId']] = msg['channel']
       when 'error'
         Rails.logger.info "Event: #{msg} ignored"
       end
