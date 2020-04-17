@@ -9,7 +9,7 @@ module Irix
     MAX_PERIOD_TO_SNAPSHOT = 60
 
     attr_accessor :snap, :snapshot_time, :increment_count, :sequence_number,
-                  :open_channels
+                  :open_channels, :asks, :bids
 
     def initialize(config)
       super
@@ -65,6 +65,8 @@ module Irix
 
       @sequence_number = 0
       @increment_count = 0
+      @bids = []
+      @asks = []
       @snap = { 'asks' => [], 'bids' => [] }
       sub = {
         event: 'subscribe',
@@ -76,6 +78,11 @@ module Irix
       EM.next_tick do
         ws.send(JSON.generate(sub))
       end
+      Fiber.new do
+        EM::Synchrony.add_periodic_timer(0.2) do
+          publish_increment
+        end
+      end.resume
     end
 
     def ws_read_public_message(msg)
@@ -134,11 +141,11 @@ module Irix
           @increment_count = 0
         end
 
-        publish_increment(msg[1])
+        fill_increment(msg[1])
       end
     end
 
-    def publish_increment(order)
+    def fill_increment(order)
       side = order[2].positive? ? 'bid' : 'ask'
       price = order[0].to_s
       if order[1].zero?
@@ -149,18 +156,35 @@ module Irix
         @snap["#{side}s"].delete_if { |point| point[0] == price }
         @snap["#{side}s"] << [price.to_s, amount.to_s]
       end
+      if side == 'bid'
+        @bids.delete_if { |point| point[0] == price }
+        @bids << [price.to_s, amount.to_s]
+      elsif side == 'ask'
+        @asks.delete_if { |point| point[0] == price }
+        @asks << [price.to_s, amount.to_s]
+      end
       @increment_count += 1
-      @sequence_number += 1
-      @peatio_mq.enqueue_event('public', 'ethusd', 'ob-inc',
-                               "#{side}s" => [price, amount],
-                               'sequence' => @sequence_number)
+    end
+
+    def publish_increment
+      inc = {}
+      inc['bids'] = @bids.sort.reverse if @bids.present?
+      inc['asks'] = @asks.sort if @asks.present?
+      if inc.present?
+        @sequence_number += 1
+        @peatio_mq.enqueue_event('public', @market, 'ob-inc',
+                                 'bids' => inc['bids'], 'asks' => inc['asks'],
+                                 'sequence' => @sequence_number)
+      end
+      @bids = []
+      @asks = []
     end
 
     def publish_snapshot
       @snapshot_time = Time.now
-      @peatio_mq.enqueue_event('public', 'ethusd', 'ob-snap',
-                               'asks' => @snap['asks'].sort!,
-                               'bids' => @snap['bids'].sort.reverse!,
+      @peatio_mq.enqueue_event('public', @market, 'ob-snap',
+                               'bids' => @snap['bids'].sort.reverse,
+                               'asks' => @snap['asks'].sort,
                                'sequence' => @sequence_number)
     end
 
