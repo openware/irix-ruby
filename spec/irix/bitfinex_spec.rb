@@ -75,7 +75,7 @@ RSpec.describe Irix::Bitfinex do
       bitfinex.snap = { 'asks' => [], 'bids' => [] }
       bitfinex.increment_count = 0
       bitfinex.snapshot_time = Time.now
-      expect(bitfinex).to receive(:publish_increment)
+      expect(bitfinex).to receive(:fill_increment)
       bitfinex.detect_order(order_msg)
     end
 
@@ -84,7 +84,7 @@ RSpec.describe Irix::Bitfinex do
       bitfinex.increment_count = 101
       bitfinex.snapshot_time = Time.now - 60
       expect(bitfinex).to receive(:publish_snapshot)
-      expect(bitfinex).to receive(:publish_increment)
+      expect(bitfinex).to receive(:fill_increment)
       bitfinex.detect_order(order_msg)
     end
   end
