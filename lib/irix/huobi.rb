@@ -2,6 +2,14 @@
 
 module Irix
   class Huobi < Peatio::Upstream::Base
+    require 'time'
+
+    MIN_INCREMENT_COUNT_TO_SNAPSHOT = 100
+    MIN_PERIOD_TO_SNAPSHOT = 5
+    MAX_PERIOD_TO_SNAPSHOT = 60
+
+    attr_accessor :snap, :snapshot_time, :increment_count, :sequence_number,
+                  :asks, :bids
     # WS huobi global
     # websocket: "wss://api.huobi.pro/ws/"
     # WS for krw markets
@@ -37,9 +45,70 @@ module Irix
       end
 
       case msg['ch']
-      when /market\.([^.]+)\.trade\.detail/
+      when /market\.#{@target}\.trade\.detail/
         detect_trade(msg.dig('tick', 'data'))
+      when /market\.#{@target}\.mbp\.150/
+        detect_order(msg.dig('tick'))
       end
+    end
+
+    def detect_order(msg)
+      if @increment_count < MIN_INCREMENT_COUNT_TO_SNAPSHOT && @snapshot_time <= Time.now - MAX_PERIOD_TO_SNAPSHOT
+        publish_snapshot
+        @increment_count = 0
+      elsif @increment_count >= MIN_INCREMENT_COUNT_TO_SNAPSHOT && @snapshot_time < Time.now - MIN_PERIOD_TO_SNAPSHOT
+        publish_snapshot
+        @increment_count = 0
+      end
+      fill_increment(msg)
+    end
+
+    def fill_increment(inc)
+      fill_side(inc, "bids")
+      fill_side(inc, "asks")
+      @increment_count += 1
+    end
+
+    def fill_side(inc, side)
+      inc[side].each do |price_point|
+        price = price_point[0]
+        amount = price_point[1]
+        if amount.zero?
+          @snap[side].delete_if { |point| point[0] == price.to_s }
+        else
+          @snap[side].delete_if { |point| point[0] == price.to_s }
+          @snap[side] << [price.to_s, amount.to_s]
+        end
+        if side == "bids"
+          @bids.delete_if { |point| point[0] == price }
+          @bids << [price.to_s, amount.to_s]
+        elsif side == "asks"
+          @asks.delete_if { |point| point[0] == price }
+          @asks << [price.to_s, amount.to_s]
+        end
+      end
+    end
+
+    def publish_increment
+      inc = {}
+      inc['bids'] = @bids.sort.reverse if @bids.present?
+      inc['asks'] = @asks.sort if @asks.present?
+      if inc.present?
+        @sequence_number += 1
+        @peatio_mq.enqueue_event('public', @market, 'ob-inc',
+                                 'bids' => inc['bids'], 'asks' => inc['asks'],
+                                 'sequence' => @sequence_number)
+      end
+      @bids = []
+      @asks = []
+    end
+
+    def publish_snapshot
+      @snapshot_time = Time.now
+      @peatio_mq.enqueue_event('public', @market, 'ob-snap',
+                               'bids' => @snap['bids'].sort.reverse,
+                               'asks' => @snap['asks'].sort,
+                               'sequence' => @sequence_number)
     end
 
     def detect_trade(msg)
@@ -69,6 +138,8 @@ module Irix
     end
 
     def subscribe_trades(market, ws)
+      return unless @config['trade_proxy']
+
       sub = {
         'sub' => "market.#{market}.trade.detail"
       }
@@ -77,6 +148,30 @@ module Irix
       EM.next_tick do
         ws.send(JSON.generate(sub))
       end
+    end
+
+    def subscribe_orderbook(market, ws)
+      return unless @config['orderbook_proxy']
+
+      @sequence_number = 0
+      @increment_count = 0
+      @snapshot_time = Time.now
+      @bids = []
+      @asks = []
+      @snap = { 'asks' => [], 'bids' => [] }
+      sub = {
+        'sub' => "market.#{market}.mbp.150"
+      }
+
+      Rails.logger.info 'Open event' + sub.to_s
+      EM.next_tick do
+        ws.send(JSON.generate(sub))
+      end
+      Fiber.new do
+        EM::Synchrony.add_periodic_timer(0.2) do
+          publish_increment
+        end
+      end.resume
     end
   end
 end
